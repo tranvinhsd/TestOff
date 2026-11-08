@@ -1,0 +1,6 @@
+{
+  "name": "HeThongThiTracNghiemOffline",
+  "description": "Hệ thống làm bài thi trắc nghiệm offline, chấm điểm tức thì, xem giải thích chi tiết và xuất đề thi.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
