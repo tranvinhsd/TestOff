@@ -122,7 +122,17 @@ Giải thích: File HTML có phần mở rộng tiêu chuẩn là .html hoặc .
         }),
       });
 
-      const resData = await response.json();
+      const responseText = await response.text();
+      let resData: any;
+      try {
+        resData = JSON.parse(responseText);
+      } catch {
+        throw new Error(
+          response.ok
+            ? 'Phản hồi từ máy chủ không đúng định dạng JSON.'
+            : `Máy chủ gặp sự cố (${response.status}). Vui lòng thử lại sau giây lát.`
+        );
+      }
 
       if (!response.ok || !resData.success) {
         throw new Error(resData.error || 'Máy chủ không thể tạo câu hỏi lúc này.');

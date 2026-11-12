@@ -11,15 +11,76 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3000;
 const isProd = process.env.NODE_ENV === 'production';
 
-// Initialize Gemini SDK with User-Agent header as required
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build',
+// Allowed models from gemini-api guidelines (ordered by preference)
+const CANDIDATE_MODELS = [
+  'gemini-3.8-flash',
+  'gemini-flash-latest',
+  'gemini-3.1-flash-lite',
+] as const;
+
+function getAiClient(): GoogleGenAI {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error('Thiếu cấu hình GEMINI_API_KEY trên máy chủ.');
+  }
+  return new GoogleGenAI({
+    apiKey,
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build',
+      },
     },
-  },
-});
+  });
+}
+
+function isTransientError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return (
+    msg.includes('503') ||
+    msg.includes('429') ||
+    msg.includes('UNAVAILABLE') ||
+    msg.includes('RESOURCE_EXHAUSTED') ||
+    msg.includes('high demand') ||
+    msg.includes('ECONNRESET') ||
+    msg.includes('ETIMEDOUT') ||
+    msg.includes('fetch failed')
+  );
+}
+
+function formatReadableError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  try {
+    const parsed = JSON.parse(raw);
+    const code = parsed?.error?.code;
+    const status = parsed?.error?.status;
+    if (code === 503 || status === 'UNAVAILABLE') {
+      return 'Hệ thống AI đang quá tải tạm thời (503). Vui lòng thử lại sau vài giây.';
+    }
+    if (code === 429 || status === 'RESOURCE_EXHAUSTED') {
+      return 'Đã vượt quá giới hạn lượt gọi AI tạm thời (429). Vui lòng đợi một lát rồi thử lại.';
+    }
+    if (parsed?.error?.message) {
+      return parsed.error.message;
+    }
+  } catch {
+    // Not JSON, inspect plain text
+  }
+  if (raw.includes('503') || raw.includes('UNAVAILABLE')) {
+    return 'Hệ thống AI đang quá tải tạm thời (503). Vui lòng thử lại sau vài giây.';
+  }
+  if (raw.includes('429') || raw.includes('RESOURCE_EXHAUSTED')) {
+    return 'Đã vượt quá giới hạn lượt gọi AI tạm thời (429). Vui lòng đợi một lát rồi thử lại.';
+  }
+  return raw || 'Đã xảy ra lỗi khi tạo câu hỏi bằng AI. Vui lòng thử lại.';
+}
+
+function extractJsonText(text: string): string {
+  const trimmed = text.trim();
+  const fenceMatch = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  return fenceMatch ? fenceMatch[1].trim() : trimmed;
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function startServer() {
   const app = express();
@@ -42,13 +103,15 @@ async function startServer() {
         return;
       }
 
+      const safeCount = Math.min(Math.max(Number(numQuestions) || 5, 1), 20);
+
       const prompt = `Bạn là một chuyên gia giáo dục và biên soạn đề thi trắc nghiệm hàng đầu tại Việt Nam.
 Hãy tạo một bộ đề thi trắc nghiệm chất lượng cao, chuẩn kiến thức, bằng tiếng Việt dựa trên yêu cầu sau:
 
 - Chủ đề / Nội dung: "${topic.trim()}"
 - Môn học: "${subject}"
 - Cấp học / Lớp: "${grade}"
-- Số lượng câu hỏi: ${Math.min(Math.max(Number(numQuestions) || 5, 1), 20)} câu
+- Số lượng câu hỏi: ${safeCount} câu
 - Độ khó mong muốn: "${difficulty}"
 ${customPrompt ? `- Yêu cầu bổ sung của giáo viên: "${customPrompt.trim()}"` : ''}
 
@@ -59,83 +122,112 @@ Quy chuẩn biên soạn:
 4. Câu hỏi rõ ràng, không mơ hồ, không tạo các câu vô nghĩa như "Tất cả đều sai", "Cả A và B đều đúng" nếu không cần thiết.
 5. Độ khó (difficulty) của từng câu phải được đánh giá khách quan: 'Dễ', 'Trung bình', hoặc 'Khó'.`;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
-        contents: prompt,
-        config: {
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              title: {
-                type: Type.STRING,
-                description: 'Tiêu đề ngắn gọn, chuẩn mực của đề thi (Ví dụ: Đề Kiểm Tra Trắc Nghiệm: Khái Niệm Cơ Bản Về HTML)',
-              },
-              subject: {
-                type: Type.STRING,
-                description: 'Môn học tương ứng',
-              },
-              grade: {
-                type: Type.STRING,
-                description: 'Khối lớp hoặc cấp học',
-              },
-              description: {
-                type: Type.STRING,
-                description: 'Mô tả ngắn về nội dung và mục tiêu kiến thức của bài kiểm tra',
-              },
-              durationMinutes: {
-                type: Type.INTEGER,
-                description: 'Thời gian làm bài ước tính hợp lý tính bằng phút (e.g. 15, 20, 45)',
-              },
-              questions: {
-                type: Type.ARRAY,
-                items: {
+      const ai = getAiClient();
+      let lastError: unknown = null;
+      let parsedData: unknown = null;
+
+      for (const modelName of CANDIDATE_MODELS) {
+        try {
+          const response = await Promise.race([
+            ai.models.generateContent({
+              model: modelName,
+              contents: prompt,
+              config: {
+                responseMimeType: 'application/json',
+                responseSchema: {
                   type: Type.OBJECT,
                   properties: {
-                    question: {
+                    title: {
                       type: Type.STRING,
-                      description: 'Nội dung câu hỏi trắc nghiệm',
+                      description:
+                        'Tiêu đề ngắn gọn, chuẩn mực của đề thi (Ví dụ: Đề Kiểm Tra Trắc Nghiệm: Khái Niệm Cơ Bản Về HTML)',
                     },
-                    options: {
+                    subject: {
+                      type: Type.STRING,
+                      description: 'Môn học tương ứng',
+                    },
+                    grade: {
+                      type: Type.STRING,
+                      description: 'Khối lớp hoặc cấp học',
+                    },
+                    description: {
+                      type: Type.STRING,
+                      description: 'Mô tả ngắn về nội dung và mục tiêu kiến thức của bài kiểm tra',
+                    },
+                    durationMinutes: {
+                      type: Type.INTEGER,
+                      description: 'Thời gian làm bài ước tính hợp lý tính bằng phút (e.g. 15, 20, 45)',
+                    },
+                    questions: {
                       type: Type.ARRAY,
                       items: {
-                        type: Type.STRING,
+                        type: Type.OBJECT,
+                        properties: {
+                          question: {
+                            type: Type.STRING,
+                            description: 'Nội dung câu hỏi trắc nghiệm',
+                          },
+                          options: {
+                            type: Type.ARRAY,
+                            items: {
+                              type: Type.STRING,
+                            },
+                            description: 'Danh sách 4 phương án lựa chọn',
+                          },
+                          correctAnswer: {
+                            type: Type.INTEGER,
+                            description: 'Chỉ số phương án đúng từ 0 đến 3 (0 = A, 1 = B, 2 = C, 3 = D)',
+                          },
+                          explanation: {
+                            type: Type.STRING,
+                            description: 'Giải thích chi tiết lời giải vì sao đáp án đúng',
+                          },
+                          difficulty: {
+                            type: Type.STRING,
+                            description: 'Độ khó: Dễ, Trung bình, hoặc Khó',
+                          },
+                        },
+                        required: ['question', 'options', 'correctAnswer', 'explanation', 'difficulty'],
                       },
-                      description: 'Danh sách 4 phương án lựa chọn',
-                    },
-                    correctAnswer: {
-                      type: Type.INTEGER,
-                      description: 'Chỉ số phương án đúng từ 0 đến 3 (0 = A, 1 = B, 2 = C, 3 = D)',
-                    },
-                    explanation: {
-                      type: Type.STRING,
-                      description: 'Giải thích chi tiết lời giải vì sao đáp án đúng',
-                    },
-                    difficulty: {
-                      type: Type.STRING,
-                      description: 'Độ khó: Dễ, Trung bình, hoặc Khó',
                     },
                   },
-                  required: ['question', 'options', 'correctAnswer', 'explanation', 'difficulty'],
+                  required: ['title', 'subject', 'description', 'questions'],
                 },
               },
-            },
-            required: ['title', 'subject', 'description', 'questions'],
-          },
-        },
-      });
+            }),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('ETIMEDOUT: Yêu cầu AI vượt quá thời gian chờ')), 20000)
+            ),
+          ]);
 
-      const rawJson = response.text;
-      if (!rawJson) {
-        throw new Error('AI không phản hồi nội dung văn bản');
+          const rawJson = response.text;
+          if (!rawJson) {
+            throw new Error('AI không phản hồi nội dung văn bản');
+          }
+
+          parsedData = JSON.parse(extractJsonText(rawJson));
+          break;
+        } catch (err) {
+          lastError = err;
+          console.warn(`AI generation failed with ${modelName}:`, err);
+          if (isTransientError(err)) {
+            await sleep(300);
+            continue;
+          }
+          // Non-transient error (e.g. invalid API key, bad request), stop trying immediately
+          throw err;
+        }
       }
 
-      const parsedData = JSON.parse(rawJson);
+      if (!parsedData) {
+        throw lastError || new Error('Không thể tạo câu hỏi từ AI lúc này.');
+      }
+
       res.json({ success: true, data: parsedData });
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error in /api/ai/generate-quiz:', error);
       res.status(500).json({
-        error: error.message || 'Đã xảy ra lỗi khi tạo câu hỏi bằng AI. Vui lòng thử lại.',
+        error: formatReadableError(error),
       });
     }
   });
