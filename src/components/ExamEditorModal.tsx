@@ -107,20 +107,44 @@ Giải thích: File HTML có phần mở rộng tiêu chuẩn là .html hoặc .
     setIsGenerating(true);
 
     try {
-      const response = await fetch('/api/ai/generate-quiz', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          topic: aiTopic.trim(),
-          subject: aiSubject,
-          grade: aiGrade,
-          numQuestions: aiNumQuestions,
-          difficulty: aiDifficulty,
-          customPrompt: aiCustomPrompt,
-        }),
+      const payload = JSON.stringify({
+        topic: aiTopic.trim(),
+        subject: aiSubject,
+        grade: aiGrade,
+        numQuestions: aiNumQuestions,
+        difficulty: aiDifficulty,
+        customPrompt: aiCustomPrompt,
       });
+
+      const basePrefix = (import.meta.env.BASE_URL || '/').replace(/\/$/, '');
+      const candidateUrls = Array.from(
+        new Set([`${basePrefix}/api/ai/generate-quiz`, '/api/ai/generate-quiz'])
+      );
+
+      let response: Response | null = null;
+      for (const url of candidateUrls) {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: payload,
+        });
+        response = res;
+        if (res.status !== 404 && res.status !== 405) {
+          break;
+        }
+      }
+
+      if (!response) {
+        throw new Error('Không thể kết nối tới máy chủ tạo đề AI.');
+      }
+
+      if (response.status === 405) {
+        throw new Error(
+          'Lỗi 405: Máy chủ hiện tại đang chạy ở chế độ web tĩnh (ví dụ GitHub Pages) nên không hỗ trợ API tạo đề AI ở phía server. Vui lòng mở ứng dụng qua máy chủ Node.js (npm start hoặc link AI Studio) để dùng AI, hoặc dùng tab "Dán văn bản" / "Chỉnh sửa" để thêm đề offline.'
+        );
+      }
 
       const responseText = await response.text();
       let resData: any;
