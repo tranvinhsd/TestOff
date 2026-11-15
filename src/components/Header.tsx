@@ -90,7 +90,13 @@ export const Header: React.FC<Props> = ({
             className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white text-xs font-bold shadow-2xs transition-colors cursor-pointer"
           >
             <Sparkles className="w-3.5 h-3.5" />
-            <span>Tạo đề AI</span>
+            <span>
+              {typeof window !== 'undefined' &&
+              window.location.hostname.endsWith('github.io') &&
+              !(import.meta.env.VITE_API_URL || '').trim()
+                ? 'Thêm đề thi'
+                : 'Tạo đề AI'}
+            </span>
           </button>
         </div>
       </div>

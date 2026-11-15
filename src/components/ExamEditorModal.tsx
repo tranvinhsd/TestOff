@@ -36,7 +36,15 @@ const PRESET_TOPICS = [
 ];
 
 export const ExamEditorModal: React.FC<Props> = ({ isOpen, onClose, onSaveExam }) => {
-  const [activeTab, setActiveTab] = useState<'ai' | 'quickImport' | 'form'>('ai');
+  const configuredApiUrl = (import.meta.env.VITE_API_URL || '').trim().replace(/\/$/, '');
+  const isStaticGitHubPages =
+    typeof window !== 'undefined' &&
+    window.location.hostname.endsWith('github.io') &&
+    !configuredApiUrl;
+
+  const [activeTab, setActiveTab] = useState<'ai' | 'quickImport' | 'form'>(
+    isStaticGitHubPages ? 'quickImport' : 'ai'
+  );
 
   // Exam Meta
   const [title, setTitle] = useState('');
@@ -97,6 +105,13 @@ Giải thích: File HTML có phần mở rộng tiêu chuẩn là .html hoặc .
   };
 
   const handleGenerateWithAi = async (appendMode: boolean = false) => {
+    if (isStaticGitHubPages) {
+      setErrorMessage(
+        'Tính năng Tạo đề bằng AI cần máy chủ Node.js (dist/server.cjs) hoặc cấu hình biến VITE_API_URL vì GitHub Pages chỉ chạy web tĩnh. Vui lòng dùng tab "Dán văn bản" hoặc "Chỉnh sửa" để tạo đề offline ngay trên GitHub Pages.'
+      );
+      return;
+    }
+
     if (!aiTopic.trim()) {
       setErrorMessage('Vui lòng nhập chủ đề hoặc bài học cần tạo câu hỏi!');
       return;
@@ -116,7 +131,6 @@ Giải thích: File HTML có phần mở rộng tiêu chuẩn là .html hoặc .
         customPrompt: aiCustomPrompt,
       });
 
-      const configuredApiUrl = (import.meta.env.VITE_API_URL || '').trim().replace(/\/$/, '');
       const basePrefix = (import.meta.env.BASE_URL || '/').replace(/\/$/, '');
       const candidateUrls = configuredApiUrl
         ? [`${configuredApiUrl}/api/ai/generate-quiz`]
@@ -465,6 +479,40 @@ Giải thích: File HTML có phần mở rộng tiêu chuẩn là .html hoặc .
           {/* AI Tab Content */}
           {activeTab === 'ai' && (
             <div className="space-y-5">
+              {isStaticGitHubPages && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-xs text-amber-900 space-y-2">
+                  <div className="font-bold flex items-center gap-1.5">
+                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>Đang chạy trên GitHub Pages (Web tĩnh - chưa gắn biến VITE_API_URL)</span>
+                  </div>
+                  <p className="leading-relaxed text-amber-800">
+                    GitHub Pages chỉ phục vụ file tĩnh nên không tự chạy được API Node.js để gọi Gemini AI (nếu gọi sẽ báo lỗi 405). Để tạo đề ngay trên GitHub Pages không lỗi, hãy dùng tab <strong>Dán văn bản</strong> hoặc <strong>Chỉnh sửa</strong>, hoặc cấu hình <code className="bg-amber-100 px-1 rounded">VITE_API_URL</code> trỏ tới backend Node.js đã bật CORS.
+                  </p>
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setErrorMessage(null);
+                        setActiveTab('quickImport');
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-semibold cursor-pointer transition-colors"
+                    >
+                      Chuyển sang Dán văn bản (Offline)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setErrorMessage(null);
+                        setActiveTab('form');
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-white hover:bg-amber-100 text-amber-900 border border-amber-300 font-semibold cursor-pointer transition-colors"
+                    >
+                      Soạn câu hỏi thủ công
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* AI Intro Card */}
               <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200/80 rounded-xl p-4 text-xs sm:text-sm text-blue-950 flex items-start gap-3">
                 <Sparkles className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />

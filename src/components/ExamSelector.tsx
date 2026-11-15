@@ -98,7 +98,11 @@ export const ExamSelector: React.FC<Props> = ({
               className="px-4 py-2 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold text-xs sm:text-sm shadow-sm transition-colors flex items-center gap-2 cursor-pointer"
             >
               <Sparkles className="w-4 h-4 text-slate-950" />
-              Tạo đề thi bằng AI
+              {typeof window !== 'undefined' &&
+              window.location.hostname.endsWith('github.io') &&
+              !(import.meta.env.VITE_API_URL || '').trim()
+                ? 'Thêm đề thi mới'
+                : 'Tạo đề thi bằng AI'}
             </button>
 
             <button
