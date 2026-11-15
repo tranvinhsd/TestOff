@@ -32,7 +32,8 @@ jobs:
       - name: Build
         run: npm run build
         env:
-          # Dòng này sẽ lấy API Key từ Bước 1 bạn đã cài để đưa vào web
+          # GitHub Pages là hosting tĩnh nên không chạy server.cjs; trỏ VITE_API_URL tới backend Node.js (Render/Railway/Cloud Run)
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           
       - name: Upload artifact

@@ -116,10 +116,11 @@ Giải thích: File HTML có phần mở rộng tiêu chuẩn là .html hoặc .
         customPrompt: aiCustomPrompt,
       });
 
+      const configuredApiUrl = (import.meta.env.VITE_API_URL || '').trim().replace(/\/$/, '');
       const basePrefix = (import.meta.env.BASE_URL || '/').replace(/\/$/, '');
-      const candidateUrls = Array.from(
-        new Set([`${basePrefix}/api/ai/generate-quiz`, '/api/ai/generate-quiz'])
-      );
+      const candidateUrls = configuredApiUrl
+        ? [`${configuredApiUrl}/api/ai/generate-quiz`]
+        : Array.from(new Set([`${basePrefix}/api/ai/generate-quiz`, '/api/ai/generate-quiz']));
 
       let response: Response | null = null;
       for (const url of candidateUrls) {
@@ -142,7 +143,7 @@ Giải thích: File HTML có phần mở rộng tiêu chuẩn là .html hoặc .
 
       if (response.status === 405) {
         throw new Error(
-          'Lỗi 405: Máy chủ hiện tại đang chạy ở chế độ web tĩnh (ví dụ GitHub Pages) nên không hỗ trợ API tạo đề AI ở phía server. Vui lòng mở ứng dụng qua máy chủ Node.js (npm start hoặc link AI Studio) để dùng AI, hoặc dùng tab "Dán văn bản" / "Chỉnh sửa" để thêm đề offline.'
+          'Không thể gọi API tạo đề AI trên GitHub Pages (lỗi 405) vì GitHub Pages chỉ chạy web tĩnh, không chạy được máy chủ Node.js (dist/server.cjs). Hãy chạy ứng dụng trên máy chủ Node.js hoặc cấu hình biến VITE_API_URL trỏ tới backend đã bật CORS, hoặc dùng tab "Dán văn bản" / "Chỉnh sửa".'
         );
       }
 

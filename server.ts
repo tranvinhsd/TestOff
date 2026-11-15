@@ -241,6 +241,18 @@ async function startServer() {
   const app = express();
   app.use(express.json({ limit: '10mb' }));
 
+  // Enable CORS for API endpoints so static frontends (e.g. GitHub Pages) can call this backend
+  app.use(['/api', '/TestOff/api'], (req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    if (req.method === 'OPTIONS') {
+      res.sendStatus(204);
+      return;
+    }
+    next();
+  });
+
   // AI Quiz Generation Endpoint (mounted at both root and base subpath)
   app.post('/api/ai/generate-quiz', handleGenerateQuiz);
   app.post('/TestOff/api/ai/generate-quiz', handleGenerateQuiz);
